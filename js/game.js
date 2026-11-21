@@ -66,11 +66,16 @@ const G = {
       }
     }
     this.buildCanvases();
-    const p = this.player; this.cam = { x: p.x, y: p.y };
+    const p = this.player;
+    // mask
+    const mi = (typeof Save !== 'undefined' && Save.mask != null && Save.mask < maskUnlockedCount()) ? Save.mask : 0;
+    this.mask = MASKS[mi].id; this.slow = 0; this.startCar = { x: p.x, y: p.y - 40 };
+    if (this.mask === 'blade') p.weapon = { type: 'knife', ammo: 0 };
+    if (this.mask === 'aegis') p.shield = 1; this.cam = { x: p.x, y: p.y };
     this.aimWorld = { x: p.x + 50, y: p.y };
     if (typeof UI !== "undefined") UI.onFloorStart();
   },
-  makePlayer(x, y) { return { x, y, r: 10, ang: -Math.PI / 2, alive: true, weapon: null, cd: 0, swing: 0, swingDir: 1, exec: null, vx: 0, vy: 0, walk: 0, muzzle: 0 }; },
+  makePlayer(x, y) { return { x, y, r: 10, ang: -Math.PI / 2, alive: true, weapon: null, cd: 0, swing: 0, swingDir: 1, exec: null, vx: 0, vy: 0, walk: 0, muzzle: 0, roll: 0, rollCd: 0, rollAng: 0, shield: 0 }; },
   makeEnemy(kind, weapon, x, y, patrol) {
     const e = { kind, weapon, x, y, r: 10, ang: Math.random() * Math.PI * 2, state: patrol ? 'patrol' : 'idle', patrol, home: { x, y }, path: [], pathT: 0,
       react: 0, cd: rand(0.3, 0.8), windup: 0, downT: 0, lostT: 0, searchT: 0, lastSeen: null, target: null, hp: 1, flash: 0, vx: 0, vy: 0, seed: Math.random() * 100,
@@ -150,6 +155,7 @@ const G = {
           if (c.t > 0.15 && Math.hypot(en.x - c.x, en.y - c.y) < en.r + 4) {
             const a = Math.atan2(en.y - d.hy, en.x - d.hx);
             if (en.kind === 'heavy' || en.kind === 'boss') { d.av = -d.av * 0.5; AudioSys.sfx('door'); }
+            else if (this.mask === 'breaker') { AudioSys.sfx('doorHit'); this.kill(en, 'melee', a); d.av *= 0.6; }
             else { this.knockDown(en, a, 'door'); AudioSys.sfx('doorHit'); this.addScore(100, en.x, en.y, false); this.shakeIt(6); d.av *= 0.6; }
           }
         }
@@ -235,7 +241,7 @@ const G = {
     if (e.kind === 'boss') { this.damageBoss(e, ang, 1); return; }
     e.state = 'down'; e.downT = how === 'door' ? 3.2 : 2.6; e.vx = Math.cos(ang) * 170; e.vy = Math.sin(ang) * 170; e.downAng = ang; e.windup = 0;
     this.dropWeapon(e, ang + rand(-1, 1));
-    this.bleed(e.x, e.y, ang, 3, 0.4); AudioSys.sfx('punch');
+    this.bleed(e.x, e.y, ang, 3, 0.4); AudioSys.sfx('punch'); Input.rumble(0.25, 0.6, 90);
   },
   kill(e, how, ang) {
     if (e.state === 'dead') return;
@@ -244,9 +250,10 @@ const G = {
     e.state = 'dead'; e.vx = Math.cos(ang) * (how === 'bullet' ? 300 : 180); e.vy = Math.sin(ang) * (how === 'bullet' ? 300 : 180); e.deadAng = ang; e.corpseVariant = Math.floor(Math.random() * 3);
     this.dropWeapon(e, ang + rand(-0.8, 0.8));
     this.bleed(e.x, e.y, ang, how === 'exec' ? 16 : 10, 1);
-    this.kills++;
+    this.kills++; e.deadT = 0; Input.rumble(0.55, 0.35, 140);
     AudioSys.sfx('splat'); this.shakeIt(how === 'bullet' ? 4 : 7);
     const base = { melee: 400, bullet: 300, exec: 600, throw: 500 }[how] || 300;
+    if (this.mask === 'chrono' && this.comboTimer > 0) { this.slow = 1.8; }
     this.addScore(e.kind === 'boss' ? 5000 : e.kind === 'heavy' ? base + 300 : base, e.x, e.y, true);
     for (let i = 0; i < 14; i++) this.particles.push({ x: e.x, y: e.y, vx: Math.cos(ang + rand(-0.7, 0.7)) * rand(60, 320), vy: Math.sin(ang + rand(-0.7, 0.7)) * rand(60, 320), life: rand(0.3, 0.7), max: 0.7, col: '#b3001b', size: rand(1.5, 3.5), blood: true });
     if (!this.cleared && this.enemies.every(x => x.state === 'dead')) { this.cleared = true; AudioSys.sfx('clear'); }
@@ -260,7 +267,7 @@ const G = {
   },
   killPlayer(ang) {
     const p = this.player; if (!p.alive || this.status !== 'play') return;
-    p.alive = false; p.deadAng = ang; p.exec = null; this.status = 'dead';
+    p.alive = false; p.deadAng = ang; p.exec = null; this.status = 'dead'; p.deadT = 0; Input.rumble(1, 1, 500);
     this.bleed(p.x, p.y, ang, 12, 1); AudioSys.sfx('death'); this.shakeIt(12); this.flash = 0.3; AudioSys.muffle(true);
   },
   bleed(x, y, ang, n, size) {
@@ -303,7 +310,8 @@ const G = {
       if (p.weapon.ammo <= 0) { if (Input.attackPressed()) { AudioSys.sfx('click'); this.floaters.push({ x: p.x, y: p.y - 18, text: L('empty'), life: 0.6, col: '#ff6' }); p.cd = 0.2; } return; }
       if (!w.auto && !Input.attackPressed()) return;
       p.weapon.ammo--; p.cd = w.cd; p.muzzle = 0.06;
-      this.shoot('player', p.x, p.y, p.ang, wt); AudioSys.sfx(w.snd); this.shakeIt(w.shake); this.makeNoise(p.x, p.y, w.noise);
+      this.shoot('player', p.x, p.y, p.ang, wt); AudioSys.sfx(w.snd); this.shakeIt(w.shake); if (this.mask !== 'hush') this.makeNoise(p.x, p.y, w.noise);
+      Input.rumble(wt === 'shotgun' ? 0.7 : 0.15, wt === 'shotgun' ? 0.5 : 0.35, wt === 'shotgun' ? 160 : 50);
       return;
     }
     if (!Input.attackPressed()) return;
@@ -313,13 +321,15 @@ const G = {
     let hits = 0;
     for (const e of this.enemies) {
       if (e.state === 'dead' || e.state === 'down') continue;
-      const d = Math.hypot(e.x - p.x, e.y - p.y); if (d > w.range + e.r) continue;
+      const range = w.range * (this.mask === 'reach' ? 1.5 : 1);
+      const d = Math.hypot(e.x - p.x, e.y - p.y); if (d > range + e.r) continue;
       const a = Math.atan2(e.y - p.y, e.x - p.x); if (Math.abs(angDiff(a, p.ang)) > w.arc && d > e.r + p.r + 2) continue;
       if (!this.clearLine(p.x, p.y, e.x, e.y)) continue;
       hits++;
       if (e.kind === 'heavy') { AudioSys.sfx('clang'); e.vx = Math.cos(a) * 60; e.vy = Math.sin(a) * 60; if (e.state !== 'chase') { e.state = 'chase'; e.react = 0.2; } continue; }
       if (!w.kill) { this.knockDown(e, a, 'punch'); this.addScore(50, e.x, e.y, false); }
       else { AudioSys.sfx('hit'); this.kill(e, 'melee', a); }
+      Input.rumble(0.4, 0.3, 80);
       if (hits >= 2) break;
     }
     // break glass with melee
@@ -343,7 +353,7 @@ const G = {
     const interval = x.gun ? 0.3 : 0.2;
     if (x.t > (x.hits + 1) * interval && x.t < x.dur) {
       x.hits++; p.swing = 1; p.swingDir *= -1;
-      if (x.gun) { p.weapon.ammo--; AudioSys.sfx(WEAPONS[p.weapon.type].snd); this.makeNoise(p.x, p.y, 400); } else AudioSys.sfx(p.weapon ? 'hit' : 'punch');
+      if (x.gun) { p.weapon.ammo--; AudioSys.sfx(WEAPONS[p.weapon.type].snd); if (this.mask !== 'hush') this.makeNoise(p.x, p.y, 400); } else AudioSys.sfx(p.weapon ? 'hit' : 'punch');
       this.bleed(x.e.x, x.e.y, rand(0, 6), 4, 0.6); this.shakeIt(4);
       for (let i = 0; i < 6; i++) this.particles.push({ x: x.e.x, y: x.e.y, vx: rand(-150, 150), vy: rand(-150, 150), life: 0.4, max: 0.4, col: '#b3001b', size: 2.5, blood: true });
     }
@@ -351,7 +361,7 @@ const G = {
   },
   throwWeapon() {
     const p = this.player; if (!p.weapon) return;
-    this.thrown.push({ type: p.weapon.type, ammo: p.weapon.ammo, x: p.x + Math.cos(p.ang) * 10, y: p.y + Math.sin(p.ang) * 10, vx: Math.cos(p.ang) * 820, vy: Math.sin(p.ang) * 820, rot: 0, spin: 22, owner: 'player' });
+    this.thrown.push({ vaulted: p.weapon.vaulted, type: p.weapon.type, ammo: p.weapon.ammo, x: p.x + Math.cos(p.ang) * 10, y: p.y + Math.sin(p.ang) * 10, vx: Math.cos(p.ang) * 820, vy: Math.sin(p.ang) * 820, rot: 0, spin: 22, owner: 'player' });
     p.weapon = null; p.cd = 0.15; AudioSys.sfx('throw');
   },
   nearestPickup() {
@@ -362,8 +372,9 @@ const G = {
   pickUp() {
     const p = this.player, k = this.nearestPickup(); if (!k) return false;
     this.pickups.splice(this.pickups.indexOf(k), 1);
-    if (p.weapon) this.pickups.push({ type: p.weapon.type, ammo: p.weapon.ammo, x: p.x, y: p.y, rot: Math.random() * 6 });
-    p.weapon = { type: k.type, ammo: k.ammo }; AudioSys.sfx('pickup'); return true;
+    if (p.weapon) this.pickups.push({ type: p.weapon.type, ammo: p.weapon.ammo, x: p.x, y: p.y, rot: Math.random() * 6, vaulted: p.weapon.vaulted });
+    let ammo = k.ammo; if (this.mask === 'vault' && WEAPONS[k.type].gun && !k.vaulted) { ammo += Math.round(WEAPONS[k.type].ammo * 0.5); }
+    p.weapon = { type: k.type, ammo, vaulted: true }; AudioSys.sfx('pickup'); return true;
   },
   // ---------- update
   update(dt) {
@@ -377,9 +388,12 @@ const G = {
     if (this.status === 'play' && p.alive) {
       if (p.exec) this.updateExec(dt);
       else {
-        const mv = Input.moveVec(); const sp = 215;
+        const mv = Input.moveVec(); const sp = 215 * (this.mask === 'comet' ? 1.25 : 1);
         const ox = p.x, oy = p.y;
-        this.moveCircle(p, mv.x * sp * dt, mv.y * sp * dt, true);
+        p.rollCd -= dt;
+        if (Input.dodgePressed() && p.rollCd <= 0 && p.roll <= 0) { p.roll = 0.34; p.rollCd = 0.75; p.rollAng = Math.hypot(mv.x, mv.y) > 0.2 ? Math.atan2(mv.y, mv.x) : p.ang; AudioSys.sfx('throw'); Input.rumble(0.1, 0.3, 80); }
+        if (p.roll > 0) { p.roll -= dt; this.moveCircle(p, Math.cos(p.rollAng) * 410 * dt, Math.sin(p.rollAng) * 410 * dt, true); }
+        else this.moveCircle(p, mv.x * sp * dt, mv.y * sp * dt, true);
         p.walk += Math.hypot(p.x - ox, p.y - oy);
         p.cd -= dt;
         // pickup / throw
@@ -395,7 +409,10 @@ const G = {
       // exit
       if (this.cleared && Math.hypot(p.x - this.exit.x, p.y - this.exit.y) < 22) this.reachExit();
     }
-    for (const e of this.enemies) this.updateEnemy(e, dt);
+    if (this.slow > 0) this.slow -= dt;
+    const edt = this.slow > 0 ? dt * 0.4 : dt;
+    for (const e of this.enemies) { this.updateEnemy(e, edt); if (e.state === 'dead') e.deadT = (e.deadT || 0) + dt; }
+    if (!p.alive) p.deadT = (p.deadT || 0) + dt;
     // separation
     const en = this.enemies;
     for (let i = 0; i < en.length; i++) for (let j = i + 1; j < en.length; j++) {
@@ -404,7 +421,7 @@ const G = {
       if (d < m && d > 0.01) { const push = (m - d) / 2; a.x -= dx / d * push; a.y -= dy / d * push; b.x += dx / d * push; b.y += dy / d * push; }
     }
     this.updateDoors(dt);
-    this.updateBullets(dt);
+    this.updateBullets(edt);
     this.updateThrown(dt);
     for (const pt of this.particles) {
       pt.x += pt.vx * dt; pt.y += pt.vy * dt; pt.vx *= Math.exp(-5 * dt); pt.vy *= Math.exp(-5 * dt); pt.life -= dt;
@@ -478,8 +495,11 @@ const G = {
             if (e.state === 'dead') continue;
             if (Math.hypot(e.x - x, e.y - y) < e.r + 2) { b.dead = true; this.kill(e, 'bullet', a); break; }
           }
-        } else if (p.alive && !p.exec && Math.hypot(p.x - x, p.y - y) < p.r + 1) { b.dead = true; this.killPlayer(a); }
-        else if (p.alive && p.exec && Math.hypot(p.x - x, p.y - y) < p.r + 1) { b.dead = true; this.killPlayer(a); }
+        } else if (p.alive && p.roll <= 0 && Math.hypot(p.x - x, p.y - y) < p.r + 1) {
+          b.dead = true;
+          if (p.shield > 0) { p.shield--; this.flash = 0.25; AudioSys.sfx('clang'); Input.rumble(0.6, 0.6, 200); this.floaters.push({ x: p.x, y: p.y - 20, text: 'AEGIS', life: 1, col: '#bfe3ff' }); for (let i = 0; i < 10; i++) this.particles.push({ x: p.x, y: p.y, vx: rand(-160, 160), vy: rand(-160, 160), life: 0.4, max: 0.4, col: '#bfe3ff', size: 2 }); }
+          else this.killPlayer(a);
+        }
         b.x = x; b.y = y;
       }
     }
@@ -510,7 +530,7 @@ const G = {
               const a = Math.atan2(k.vy, k.vx); k.hitOnce = true;
               if (e.kind === 'heavy') { AudioSys.sfx('clang'); }
               else if (e.kind === 'boss') this.damageBoss(e, a, 1);
-              else if (WEAPONS[k.type].throwKill) { AudioSys.sfx('hit'); this.kill(e, 'throw', a); }
+              else if (WEAPONS[k.type].throwKill || this.mask === 'dart') { AudioSys.sfx('hit'); this.kill(e, 'throw', a); }
               else { this.knockDown(e, a, 'throw'); this.addScore(100, e.x, e.y, false); }
               k.vx *= -0.25; k.vy *= -0.25; break;
             }
@@ -518,7 +538,7 @@ const G = {
         }
       }
       const f = Math.exp(-(k.hitOnce ? 6 : 1.4) * dt); k.vx *= f; k.vy *= f; k.rot += k.spin * dt * Math.min(1, Math.hypot(k.vx, k.vy) / 300);
-      if (Math.hypot(k.vx, k.vy) < 30) { k.done = true; this.pickups.push({ type: k.type, ammo: k.ammo, x: k.x, y: k.y, rot: k.rot }); }
+      if (Math.hypot(k.vx, k.vy) < 30) { k.done = true; this.pickups.push({ type: k.type, ammo: k.ammo, x: k.x, y: k.y, rot: k.rot, vaulted: k.vaulted }); }
     }
     this.thrown = this.thrown.filter(k => !k.done);
   },
@@ -599,7 +619,7 @@ const G = {
           e.windup -= dt;
           if (e.windup <= 0) {
             e.swing = 1; AudioSys.sfx(e.kind === 'dog' ? 'bark' : 'swing'); e.cd = e.kind === 'heavy' ? 1 : 0.6;
-            if (d < reach + 8 && Math.abs(angDiff(a, e.ang)) < 1.2 && this.clearLine(e.x, e.y, p.x, p.y)) { AudioSys.sfx('hit'); this.killPlayer(a); }
+            if (d < reach + 8 && p.roll <= 0 && Math.abs(angDiff(a, e.ang)) < 1.2 && this.clearLine(e.x, e.y, p.x, p.y)) { AudioSys.sfx('hit'); this.killPlayer(a); }
           }
         } else {
           e.cd -= dt;

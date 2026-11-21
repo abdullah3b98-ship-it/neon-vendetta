@@ -1,7 +1,7 @@
 // Unified input: keyboard, mouse, gamepad (standard mapping)
 const Input = {
   keys: {}, kp: {}, mouse: { x: 640, y: 360, down: [false, false, false], pr: [false, false, false], moved: false, wheel: 0 },
-  mode: 'kb', padIndex: -1, pad: null, btn: [], prevBtn: [], axes: [0, 0, 0, 0], padName: '',
+  mode: 'kb', padType: 'xbox', trig: [0, 0], trigPrev: [0, 0], padIndex: -1, pad: null, btn: [], prevBtn: [], axes: [0, 0, 0, 0], padName: '',
   navRepeat: { dir: null, t: 0 }, canvas: null, anyPressed: false, toast: null,
   init(canvas) {
     this.canvas = canvas;
@@ -31,7 +31,12 @@ const Input = {
     if (!p) for (const g of pads) if (g && g.connected) { p = g; this.padIndex = g.index; break; }
     this.pad = p;
     if (p) {
+      this.padType = /054c|dualsense|dualshock|wireless controller|playstation|ps4|ps5|sony/i.test(p.id) ? 'ps' : 'xbox';
       this.btn = p.buttons.map(b => b.pressed || b.value > 0.4);
+      // analog triggers: button value (standard mapping) or axis fallback (non-standard drivers report -1..1)
+      const tv = (bi, ai) => { const b = p.buttons[bi]; let v = b ? (b.value || (b.pressed ? 1 : 0)) : 0; if (p.mapping !== 'standard' && p.axes.length > ai) v = Math.max(v, (p.axes[ai] + 1) / 2); return v; };
+      this.trigPrev = this.trig; this.trig = [tv(6, 3), tv(7, 4)];
+      this.btn[6] = this.trig[0] > (this.prevBtn[6] ? 0.2 : 0.35); this.btn[7] = this.trig[1] > (this.prevBtn[7] ? 0.2 : 0.35);
       const dz = (v) => Math.abs(v) < 0.2 ? 0 : v;
       this.axes = [dz(p.axes[0] || 0), dz(p.axes[1] || 0), dz(p.axes[2] || 0), dz(p.axes[3] || 0)];
       if (this.btn.some((b, i) => b && !this.prevBtn[i]) || this.axes.some(a => Math.abs(a) > 0.5)) { if (this.mode !== 'pad') this.mode = 'pad'; this.anyPressed = true; AudioSys.init(); }
@@ -69,10 +74,21 @@ const Input = {
   attackHeld() { return this.mouse.down[0] || this.b(7); },
   attackPressed() { return this.mouse.pr[0] || this.bp(7); },
   rightPressed() { return this.mouse.pr[2]; },
-  throwPressed() { return this.bp(6) || this.bp(1) || this.kpr('KeyQ'); },
+  throwPressed() { return this.bp(6) || this.kpr('KeyQ'); },
+  dodgePressed() { return this.bp(1) || this.kpr('ControlLeft', 'KeyC'); },
+  mapPressed() { return this.bp(17) || this.bp(8) || this.kpr('Tab', 'KeyM'); },
+  dev() { return this.mode === 'pad' ? this.padType : 'kb'; },
+  rumble(strong, weak, ms) {
+    if (this.mode !== 'pad' || !this.pad) return;
+    try {
+      const a = this.pad.vibrationActuator;
+      if (a && a.playEffect) a.playEffect('dual-rumble', { startDelay: 0, duration: ms, strongMagnitude: strong, weakMagnitude: weak }).catch(() => {});
+      else if (this.pad.hapticActuators && this.pad.hapticActuators[0]) this.pad.hapticActuators[0].pulse(Math.max(strong, weak), ms);
+    } catch (e) { }
+  },
   pickupPressed() { return this.kpr('KeyE') || this.bp(2); },
   executePressed() { return this.kpr('Space') || this.bp(0); },
   restartPressed() { return this.kpr('KeyR') || this.bp(3); },
-  pausePressed() { return this.kpr('Escape', 'KeyP') || this.bp(9); },
+  pausePressed() { return this.kpr('Escape', 'KeyP') || this.bp(9) || this.bp(16); },
   lookHeld() { return this.k('ShiftLeft') || this.k('ShiftRight') || this.b(5) || this.b(4); },
 };

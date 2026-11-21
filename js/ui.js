@@ -1,9 +1,9 @@
 // ===== UI: menus, HUD, post effects, main loop =====
 const SAVE_KEY = 'neonVendetta.save.v1';
 const Settings = { music: 0.7, sfx: 0.8, lang: 'ar', fx: true, shake: 1, aimAssist: true };
-const Save = { unlocked: 1, best: {} };
-(function load() { try { const d = JSON.parse(localStorage.getItem(SAVE_KEY) || '{}'); if (d.settings) Object.assign(Settings, d.settings); if (d.unlocked) Save.unlocked = d.unlocked; if (d.best) Save.best = d.best; } catch (e) { } })();
-function persist() { try { localStorage.setItem(SAVE_KEY, JSON.stringify({ settings: Settings, unlocked: Save.unlocked, best: Save.best })); } catch (e) { } }
+const Save = { unlocked: 1, best: {}, mask: 0 };
+(function load() { try { const d = JSON.parse(localStorage.getItem(SAVE_KEY) || '{}'); if (d.settings) Object.assign(Settings, d.settings); if (d.unlocked) Save.unlocked = d.unlocked; if (d.best) Save.best = d.best; if (d.mask != null) Save.mask = d.mask; } catch (e) { } })();
+function persist() { try { localStorage.setItem(SAVE_KEY, JSON.stringify({ settings: Settings, unlocked: Save.unlocked, best: Save.best, mask: Save.mask })); } catch (e) { } }
 
 const SW = 1280, SH = 720;
 const FONT_AR = '"Noto Sans Arabic", "Segoe UI", Tahoma, Arial, sans-serif';
@@ -21,18 +21,36 @@ function txt(c, s, x, y, size, col, align, glow, font) {
 }
 function tw(c, s, size, font) { s = String(s); c.font = `bold ${size}px ${font || (isAr(s) ? FONT_AR : FONT_EN)}`; c.direction = isAr(s) ? 'rtl' : 'ltr'; return c.measureText(s).width; }
 
-// ---- button glyphs
-const PAD_COL = { A: '#3ddc61', B: '#ff4a4a', X: '#3d8bff', Y: '#ffd23d' };
-function glyphW(c, g) { if (g.length === 1 && PAD_COL[g]) return 26; c.font = `bold 13px ${FONT_EN}`; return Math.max(26, c.measureText(g).width + 14); }
-function drawGlyph(c, g, x, y) { // x = left
-  if (g.length === 1 && PAD_COL[g] && Input.mode === 'pad') {
-    c.fillStyle = '#111'; c.beginPath(); c.arc(x + 13, y, 13, 0, 7); c.fill(); c.strokeStyle = PAD_COL[g]; c.lineWidth = 2.5; c.stroke();
-    txt(c, g, x + 13, y + 1, 14, PAD_COL[g]); return 26;
+// ---- button glyphs (keyboard / Xbox / PlayStation, pixel style)
+const PAD_COL = { xA: '#3ddc61', xB: '#ff4a4a', xX: '#3d8bff', xY: '#ffd23d' };
+const PS_COL = { pX: '#7fa7ff', pO: '#ff5a5a', pS: '#ff7ad1', pT: '#3ddc97' };
+const PS_ART = {
+  pX: ['x.....x', '.x...x.', '..x.x..', '...x...', '..x.x..', '.x...x.', 'x.....x'],
+  pO: ['..xxx..', '.x...x.', 'x.....x', 'x.....x', 'x.....x', '.x...x.', '..xxx..'],
+  pS: ['xxxxxxx', 'x.....x', 'x.....x', 'x.....x', 'x.....x', 'x.....x', 'xxxxxxx'],
+  pT: ['...x...', '..x.x..', '..x.x..', '.x...x.', '.x...x.', 'x.....x', 'xxxxxxx'],
+};
+const PAD_TAGS = new Set(['L1', 'R1', 'L2', 'R2', 'L3', 'R3', 'LT', 'RT', 'LB', 'RB', 'LS', 'RS', 'OPTIONS', 'START', 'VIEW', 'TOUCHPAD', 'PS', 'CREATE']);
+function psButtonCanvas(g) {
+  return sprite('psb|' + g, () => { const G2 = Pix.grid(15, 15); Pix.ellipse(G2, 7.5, 7.5, 7, 7, '#1b1b26'); Pix.ellipse(G2, 7.5, 6.8, 6, 6, '#262634'); Pix.stamp(G2, PS_ART[g], { x: PS_COL[g] }, 4, 4); Pix.outline(G2, '#000000'); return Pix.canvas(G2); });
+}
+function glyphW(c, g) { if (PS_COL[g] || PAD_COL[g]) return 30; if (g === 'TOUCHPAD') return 46; c.font = `bold 13px ${FONT_EN}`; return Math.max(26, c.measureText(g).width + 14); }
+function drawGlyph(c, g, x, y) { // x = left edge, y = centre
+  c.save(); c.imageSmoothingEnabled = false;
+  if (PS_COL[g]) { c.drawImage(psButtonCanvas(g), x, y - 15, 30, 30); c.restore(); return 30; }
+  if (PAD_COL[g]) {
+    c.fillStyle = '#111'; c.beginPath(); c.arc(x + 15, y, 13, 0, 7); c.fill(); c.strokeStyle = PAD_COL[g]; c.lineWidth = 2.5; c.stroke();
+    txt(c, g[1], x + 15, y + 1, 14, PAD_COL[g]); c.restore(); return 30;
   }
   const w = glyphW(c, g);
-  c.fillStyle = '#f2f2f2'; c.beginPath(); c.roundRect(x, y - 12, w, 24, 5); c.fill();
-  c.fillStyle = '#9a9a9a'; c.fillRect(x + 2, y + 9, w - 4, 3);
-  txt(c, g, x + w / 2, y, 13, '#111', 'center', null, FONT_EN); return w;
+  if (g === 'TOUCHPAD') { c.fillStyle = '#262634'; c.fillRect(x, y - 10, w, 20); c.fillStyle = '#3a3a4c'; c.fillRect(x + 2, y - 8, w - 4, 14); c.fillStyle = '#9aa0ff'; c.fillRect(x + w / 2 - 2, y - 3, 4, 4); c.strokeStyle = '#000'; c.lineWidth = 2; c.strokeRect(x, y - 10, w, 20); c.restore(); return w; }
+  if (PAD_TAGS.has(g)) {
+    c.fillStyle = '#1b1b26'; c.fillRect(x, y - 12, w, 24); c.fillStyle = '#2c2c3c'; c.fillRect(x + 2, y - 10, w - 4, 16); c.strokeStyle = '#000'; c.lineWidth = 2; c.strokeRect(x, y - 12, w, 24);
+    txt(c, g, x + w / 2, y, 12, '#e8e8ff', 'center', null, FONT_EN); c.restore(); return w;
+  }
+  c.fillStyle = '#f2f2f2'; c.fillRect(x, y - 12, w, 24);
+  c.fillStyle = '#9a9a9a'; c.fillRect(x + 2, y + 8, w - 4, 3); c.strokeStyle = '#000'; c.lineWidth = 2; c.strokeRect(x, y - 12, w, 24);
+  txt(c, g, x + w / 2, y - 1, 13, '#111', 'center', null, FONT_EN); c.restore(); return w;
 }
 function prompt(c, glyphs, label, cx, cy, size) {
   size = size || 20; const gap = 8;
@@ -40,18 +58,18 @@ function prompt(c, glyphs, label, cx, cy, size) {
   const lw = tw(c, label, size); const total = gw + gap + lw;
   const rtl = isAr(label);
   let x = cx - total / 2;
-  c.fillStyle = 'rgba(0,0,0,0.55)'; c.beginPath(); c.roundRect(x - 12, cy - 18, total + 24, 36, 8); c.fill();
+  c.fillStyle = 'rgba(0,0,0,0.6)'; c.fillRect(x - 12, cy - 19, total + 24, 38);
   if (rtl) { txt(c, label, x + lw, cy, size, '#fff', 'right'); x += lw + gap; for (const g of glyphs) x += drawGlyph(c, g, x, cy) + 4; }
   else { for (const g of glyphs) x += drawGlyph(c, g, x, cy) + 4; txt(c, label, x + gap, cy, size, '#fff', 'left'); }
 }
-const BIND = {
-  pickup: () => Input.mode === 'pad' ? ['X'] : ['E'],
-  execute: () => Input.mode === 'pad' ? ['A'] : ['SPACE'],
-  restart: () => Input.mode === 'pad' ? ['Y'] : ['R'],
-  throwW: () => Input.mode === 'pad' ? ['LT'] : ['RMB'],
-  confirm: () => Input.mode === 'pad' ? ['A'] : ['ENTER'],
-  back: () => Input.mode === 'pad' ? ['B'] : ['ESC'],
+const BINDS = {
+  pickup: { kb: ['E'], xbox: ['xX'], ps: ['pS'] }, execute: { kb: ['SPACE'], xbox: ['xA'], ps: ['pX'] },
+  restart: { kb: ['R'], xbox: ['xY'], ps: ['pT'] }, throwW: { kb: ['RMB'], xbox: ['LT'], ps: ['L2'] },
+  confirm: { kb: ['ENTER'], xbox: ['xA'], ps: ['pX'] }, back: { kb: ['ESC'], xbox: ['xB'], ps: ['pO'] },
+  dodge: { kb: ['CTRL'], xbox: ['xB'], ps: ['pO'] }, map: { kb: ['TAB'], xbox: ['VIEW'], ps: ['TOUCHPAD'] },
+  pause: { kb: ['ESC'], xbox: ['START'], ps: ['OPTIONS'] }, attack: { kb: ['LMB'], xbox: ['RT'], ps: ['R2'] },
 };
+const BIND = new Proxy({}, { get: (_, k) => () => BINDS[k][Input.dev()] });
 
 // ---- post FX
 const FX = {
@@ -159,22 +177,23 @@ const UI = {
     const i = G.levelIdx, n = this.levelEnemyCount(i), time = G.levelTime;
     let ratio = G.score / (n * 550); const parT = n * 9; ratio += clamp((parT - time) / parT, 0, 1) * 0.25;
     const grade = ratio >= 1.25 ? 'S' : ratio >= 1.0 ? 'A+' : ratio >= 0.85 ? 'A' : ratio >= 0.7 ? 'B' : ratio >= 0.55 ? 'C' : 'D';
-    const prev = Save.best[i]; let newBest = false;
+    const masksBefore = maskUnlockedCount(); const prev = Save.best[i]; let newBest = false;
     if (!prev || G.score > prev.score) { Save.best[i] = { score: G.score, grade: (!prev || GRADE_ORDER.indexOf(grade) > GRADE_ORDER.indexOf(prev.grade)) ? grade : prev.grade }; newBest = true; }
     else if (GRADE_ORDER.indexOf(grade) > GRADE_ORDER.indexOf(prev.grade)) prev.grade = grade;
     Save.unlocked = Math.max(Save.unlocked, Math.min(LEVELS.length, i + 2)); persist();
-    this.result = { grade, score: G.score, combo: G.maxCombo, time, kills: G.kills, newBest, level: i };
+    this.result = { grade, score: G.score, combo: G.maxCombo, time, kills: G.kills, newBest, level: i, newMask: maskUnlockedCount() > masksBefore };
     setTimeout(() => this.go('results'), 700);
   },
-  startLevel(i) { G.loadLevel(i); this.go('intro'); this.introT = 0; this.tip = ['tip1', 'tip2', 'tip3'][i % 3]; },
+  startLevel(i) { this.pendingLevel = i; const n = maskUnlockedCount(); this.go('masks', Math.min(Save.mask || 0, n - 1)); },
+  launchLevel(i) { G.loadLevel(i); this.go('intro'); this.introT = 0; this.tip = ['tip1', 'tip2', 'tip3'][i % 3]; },
   fmtTime(s) { const m = Math.floor(s / 60), ss = Math.floor(s % 60); return m + ':' + String(ss).padStart(2, '0'); },
   frame(dt, c) {
     this.t += dt; this.screenT = (this.screenT || 0) + dt; const t = this.t;
-    const inGame = ['game', 'pause', 'intro'].includes(this.screen) || (this.screen === 'settings' && this.settingsReturn === 'pause');
+    const inGame = ['game', 'pause', 'intro', 'map'].includes(this.screen) || (this.screen === 'settings' && this.settingsReturn === 'pause');
     // music
-    if (['game', 'pause', 'intro'].includes(this.screen) || (this.screen === 'settings' && this.settingsReturn === 'pause')) AudioSys.playMusic(G.levelIdx + 11, LEVELS[G.levelIdx].boss ? 'boss' : 'game');
+    if (['game', 'pause', 'intro', 'map'].includes(this.screen) || (this.screen === 'settings' && this.settingsReturn === 'pause')) AudioSys.playMusic(G.levelIdx + 11, LEVELS[G.levelIdx].boss ? 'boss' : 'game');
     else AudioSys.playMusic(777, 'menu');
-    const muff = this.screen === 'pause' || (this.screen === 'settings' && this.settingsReturn === 'pause') || (this.screen === 'game' && G.status === 'dead');
+    const muff = this.screen === 'pause' || this.screen === 'map' || (this.screen === 'settings' && this.settingsReturn === 'pause') || (this.screen === 'game' && G.status === 'dead');
     if (muff !== this.lastMuff) { AudioSys.muffle(muff); this.lastMuff = muff; }
     UI.canvasEl.style.cursor = (this.screen === 'game' && Input.mode === 'kb') ? 'none' : (Input.mode === 'pad' ? 'none' : 'default');
     switch (this.screen) {
@@ -185,12 +204,14 @@ const UI = {
       case 'settings': this.settings(c, t, dt); break;
       case 'credits': this.credits(c, t); break;
       case 'intro': this.intro(c, t, dt); break;
+      case 'masks': this.maskSelect(c, t); break;
+      case 'map': this.mapScreen(c, t); break;
       case 'game': this.game(c, t, dt); break;
       case 'pause': this.pause(c, t); break;
       case 'results': this.results(c, t); break;
       case 'ending': this.ending(c, t); break;
     }
-    if (Input.toast) { const a = clamp(Input.toast.t, 0, 1); c.globalAlpha = a; prompt(c, ['START'], L(Input.toast.k), SW / 2, 40, 18); c.globalAlpha = 1; }
+    if (Input.toast) { const a = clamp(Input.toast.t, 0, 1); c.globalAlpha = a; prompt(c, BIND.pause(), L(Input.toast.k) + (Input.padType === 'ps' ? ' (PlayStation)' : ''), SW / 2, 40, 18); c.globalAlpha = 1; }
   },
   title(c, t) {
     drawBackdrop(c, t); drawTitle(c, t, 220);
@@ -210,7 +231,7 @@ const UI = {
     c.fillStyle = 'rgba(10,0,20,0.55)'; c.fillRect(SW / 2 - 230, 300, 460, 330);
     menuList(c, items, 0, SW / 2, 345, 62, 34, t);
     prompt(c, BIND.confirm(), Settings.lang === 'ar' ? 'اختيار' : 'SELECT', SW / 2, 670, 16);
-    txt(c, Input.mode === 'pad' ? '🎮 ' + L('pad') : '⌨ ' + L('kb'), SW - 20, 700, 14, 'rgba(255,255,255,0.6)', 'right');
+    txt(c, Input.dev() === 'ps' ? L('ps') : Input.dev() === 'xbox' ? L('xbox') : L('kb'), SW - 20, 700, 14, 'rgba(255,255,255,0.6)', 'right');
   },
   levelSelect(c, t) {
     drawBackdrop(c, t);
@@ -258,29 +279,6 @@ const UI = {
     else if (this.screen === 'controls') this.go('menu', 2);
     else if (this.screen === 'credits') this.go('menu', 4);
   },
-  controls(c, t) {
-    drawBackdrop(c, t); c.fillStyle = 'rgba(8,0,18,0.8)'; c.fillRect(0, 0, SW, SH);
-    txt(c, L('controls'), SW / 2, 60, 46, '#fff', 'center', '#ff2a8a');
-    const rows = [
-      ['c_move', 'W A S D', 'LS'], ['c_aim', 'MOUSE', 'RS'], ['c_attack', 'LMB', 'RT'], ['c_throw', 'RMB / Q', 'LT / B'],
-      ['c_pick', 'E / RMB', 'X'], ['c_exec', 'SPACE', 'A'], ['c_restart', 'R', 'Y'], ['c_look', 'SHIFT', 'RB / LB'], ['c_pause', 'ESC / P', 'START'],
-    ];
-    const ar = Settings.lang === 'ar';
-    const colA = ar ? 980 : 300, colK = 640, colP = ar ? 300 : 980;
-    txt(c, L('kb'), colK, 120, 22, Input.mode === 'kb' ? '#3ffcff' : '#aaa');
-    txt(c, L('pad'), colP, 120, 22, Input.mode === 'pad' ? '#3ffcff' : '#aaa');
-    rows.forEach((r, i) => {
-      const y = 170 + i * 52;
-      c.fillStyle = i % 2 ? 'rgba(255,255,255,0.04)' : 'rgba(255,42,138,0.07)'; c.fillRect(140, y - 24, 1000, 48);
-      txt(c, L(r[0]), colA, y, 22, '#fff');
-      const kw = glyphW(c, r[1]); drawGlyph(c, r[1], colK - kw / 2, y);
-      const parts = r[2].split(' / '); let total = parts.reduce((s, p) => s + glyphW(c, p) + 8, 0); let x = colP - total / 2;
-      const saved = Input.mode; Input.mode = 'pad'; for (const p of parts) x += drawGlyph(c, p, x, y) + 8; Input.mode = saved;
-    });
-    txt(c, Settings.lang === 'ar' ? 'تقدر تطيّح العدو بالباب أو بالقبضة أو برمي السلاح، وبعدها نفّذ عليه. الثقيل ما يموت إلا بالرصاص.' : 'Knock enemies down with doors, fists or thrown weapons, then execute them. Heavies only die to bullets.', SW / 2, 650, 17, '#ffe14a');
-    if (Input.back() || Input.confirm()) { AudioSys.sfx('menuBack'); this.go('menu', 2); }
-    this.backButton(c);
-  },
   settings(c, t) {
     if (this.settingsReturn === 'pause') { this.drawGameFrozen(c); c.fillStyle = 'rgba(8,0,18,0.8)'; c.fillRect(0, 0, SW, SH); }
     else { drawBackdrop(c, t); c.fillStyle = 'rgba(8,0,18,0.75)'; c.fillRect(0, 0, SW, SH); }
@@ -325,6 +323,7 @@ const UI = {
   drawGameFrozen(c) { G.draw(c, SW, SH); },
   game(c, t, dt) {
     if (Input.pausePressed()) { AudioSys.sfx('menuBack'); this.go('pause'); this.drawGameFrozen(c); return; }
+    if (Input.mapPressed() && G.status === 'play') { AudioSys.sfx('menuOk'); this.go('map'); this.drawGameFrozen(c); return; }
     if (Input.restartPressed() && G.status !== 'complete') { G.restartFloor(); AudioSys.muffle(false); this.lastMuff = false; }
     if (G.status !== 'complete' || true) G.update(dt);
     G.draw(c, SW, SH);
@@ -347,6 +346,11 @@ const UI = {
     txt(c, L(wt), 0, 0, 32, '#3ffcff', 'right', '#3ffcff');
     if (p.weapon && WEAPONS[wt].gun) txt(c, p.weapon.ammo + ' / ' + WEAPONS[wt].ammo, 0, 38, 24, p.weapon.ammo ? '#fff' : '#ff4a4a', 'right');
     c.restore();
+    // mask badge
+    { const m = MASK_BY_ID[G.mask]; if (m) { c.save(); c.imageSmoothingEnabled = false; const bx = ar ? SW - 84 : 20; c.drawImage(maskPortrait(m.id), bx, SH - 84, 64, 64); c.restore();
+      txt(c, m[Settings.lang === 'ar' ? 'ar' : 'en'], ar ? SW - 96 : 96, SH - 62, 20, m.col.m === '#22202a' || m.col.m === '#151530' ? '#ff7ad1' : m.col.m, ar ? 'right' : 'left');
+      txt(c, Settings.lang === 'ar' ? m.dAr : m.dEn, ar ? SW - 96 : 96, SH - 36, 14, 'rgba(255,255,255,0.7)', ar ? 'right' : 'left');
+      if (G.player.shield > 0) txt(c, '🛡', ar ? SW - 96 : 96, SH - 92, 18, '#bfe3ff', ar ? 'right' : 'left'); } }
     // level / floor
     const lv = LEVELS[G.levelIdx];
     txt(c, lv[Settings.lang] + '  —  ' + L('floor') + ' ' + (G.floorIdx + 1) + '/' + lv.floors.length, SW / 2, 26, 18, 'rgba(255,255,255,0.75)');
@@ -380,6 +384,136 @@ const UI = {
       prompt(c, BIND.restart(), L('toRestart'), SW / 2, SH / 2 + 50, 24);
     }
   },
+  maskSelect(c, t) {
+    drawBackdrop(c, t); c.fillStyle = 'rgba(8,0,18,0.78)'; c.fillRect(0, 0, SW, SH);
+    const ar = Settings.lang === 'ar', st = this.menuState, n = MASKS.length, cols = 5, unl = maskUnlockedCount();
+    txt(c, L('masks'), SW / 2, 56, 44, '#fff', 'center', '#ff2a8a');
+    txt(c, L('level') + ' ' + (this.pendingLevel + 1) + ' — ' + LEVELS[this.pendingLevel][Settings.lang], SW / 2, 100, 20, '#3ffcff');
+    if (Input.navRight()) { st.sel = ar ? (st.sel - 1 + n) % n : (st.sel + 1) % n; AudioSys.sfx('menuMove'); }
+    if (Input.navLeft()) { st.sel = ar ? (st.sel + 1) % n : (st.sel - 1 + n) % n; AudioSys.sfx('menuMove'); }
+    if (Input.navDown() || Input.navUp()) { st.sel = (st.sel + cols) % n; AudioSys.sfx('menuMove'); }
+    const cell = 104, gx0 = ar ? 700 : 70, gy0 = 150; let clicked = -1;
+    c.save(); c.imageSmoothingEnabled = false;
+    for (let i = 0; i < n; i++) {
+      const col = i % cols, row = Math.floor(i / cols), vc = ar ? cols - 1 - col : col;
+      const x = gx0 + vc * cell, y = gy0 + row * (cell + 20), m = MASKS[i], locked = i >= unl, on = st.sel === i;
+      const inside = Input.mouse.x > x && Input.mouse.x < x + cell - 8 && Input.mouse.y > y && Input.mouse.y < y + cell - 8;
+      if (inside && Input.mouse.moved && st.sel !== i) { st.sel = i; AudioSys.sfx('menuMove'); }
+      if (inside && Input.mouse.pr[0]) clicked = i;
+      c.fillStyle = on ? 'rgba(255,42,138,0.35)' : 'rgba(255,255,255,0.06)'; c.fillRect(x, y, cell - 8, cell - 8);
+      if (on) { c.strokeStyle = '#ff2a8a'; c.lineWidth = 3; c.strokeRect(x, y, cell - 8, cell - 8); }
+      const bob = on ? Math.round(Math.sin(t * 5) * 3) : 0;
+      c.drawImage(locked ? maskPortraitLocked(m.id) : maskPortrait(m.id), x + 6, y + 6 + bob, 84, 84);
+      if (locked) txt(c, '🔒', x + (cell - 8) / 2, y + (cell - 8) / 2, 26, '#fff');
+      if (Save.mask === i) { c.fillStyle = '#3ffcff'; c.fillRect(x + 4, y + cell - 16, cell - 16, 4); }
+    }
+    // detail panel
+    const m = MASKS[st.sel], locked = st.sel >= unl, px = ar ? 80 : 640, pw = 560;
+    c.fillStyle = 'rgba(0,0,0,0.45)'; c.fillRect(px, 150, pw, 440);
+    c.drawImage(locked ? maskPortraitLocked(m.id) : maskPortrait(m.id), px + pw / 2 - 112, 170 + Math.round(Math.sin(t * 2) * 4), 224, 224);
+    c.restore();
+    txt(c, locked ? '???' : m[Settings.lang === 'ar' ? 'ar' : 'en'], px + pw / 2, 430, 40, '#fff', 'center', locked ? null : '#ff2a8a');
+    txt(c, locked ? '' : m[Settings.lang === 'ar' ? 'en' : 'ar'], px + pw / 2, 470, 20, 'rgba(255,255,255,0.55)');
+    txt(c, locked ? L('maskLocked') : (Settings.lang === 'ar' ? m.dAr : m.dEn), px + pw / 2, 530, 22, locked ? '#888' : '#ffe14a');
+    const go = i => { if (i < unl) { AudioSys.sfx('menuOk'); Save.mask = i; persist(); this.launchLevel(this.pendingLevel); } else AudioSys.sfx('menuBack'); };
+    if (clicked >= 0) { if (clicked === st.sel) go(clicked); else st.sel = clicked; } else if (Input.confirm()) go(st.sel);
+    if (Input.back()) { AudioSys.sfx('menuBack'); this.go('menu'); }
+    const cx = SW / 2; prompt(c, BIND.confirm(), L('choose'), ar ? cx + 140 : cx - 140, 650, 18);
+    prompt(c, BIND.back(), L('back'), ar ? cx - 140 : cx + 140, 650, 18);
+  },
+  mapScreen(c, t) {
+    this.drawGameFrozen(c); c.fillStyle = 'rgba(6,0,16,0.86)'; c.fillRect(0, 0, SW, SH);
+    const ar = Settings.lang === 'ar';
+    txt(c, L('map') + ' — ' + LEVELS[G.levelIdx][Settings.lang] + ' • ' + L('floor') + ' ' + (G.floorIdx + 1), SW / 2, 44, 26, '#fff', 'center', '#ff2a8a');
+    const s = Math.floor(Math.min(760 / G.W, 520 / G.H)), mw = G.W * s, mh = G.H * s, mx = ar ? SW - 40 - mw : 40, my = 90;
+    for (let y = 0; y < G.H; y++) for (let x = 0; x < G.W; x++) {
+      const tt = G.tiles[y * G.W + x]; if (tt === 0) continue;
+      c.fillStyle = tt === 2 ? '#ff2a8a' : tt === 3 ? '#3ffcff' : tt === 4 ? '#0b2a4a' : (G.style[y * G.W + x] === '_' ? '#1c1a24' : '#2e2840');
+      c.fillRect(mx + x * s, my + y * s, s, s);
+    }
+    const P = (wx, wy) => [mx + wx / T * s, my + wy / T * s];
+    c.fillStyle = '#ffb04a'; for (const d of G.doors) { const [x, y] = P(d.hx, d.hy); c.fillRect(x - 2, y - 2, 4, 4); }
+    if (Math.floor(t * 3) % 2) { const [x, y] = P(G.exit.x, G.exit.y); c.fillStyle = '#3ffcff'; c.fillRect(x - s / 2, y - s / 2, s, s); }
+    if (G.mask === 'prism') { c.fillStyle = '#ff3030'; for (const e of G.enemies) if (e.state !== 'dead') { const [x, y] = P(e.x, e.y); c.fillRect(x - 3, y - 3, 6, 6); } }
+    { const [x, y] = P(G.player.x, G.player.y); c.fillStyle = '#fff'; c.fillRect(x - 4, y - 4, 8, 8); c.fillStyle = '#7b2cff'; c.fillRect(x - 2, y - 2, 4, 4); }
+    // mask panel
+    const m = MASK_BY_ID[G.mask], px = ar ? 40 : SW - 400;
+    c.fillStyle = 'rgba(255,255,255,0.05)'; c.fillRect(px, 90, 360, 520);
+    c.save(); c.imageSmoothingEnabled = false; c.drawImage(maskPortrait(m.id), px + 68, 110, 224, 224); c.restore();
+    txt(c, m[ar ? 'ar' : 'en'], px + 180, 370, 34, '#fff', 'center', '#ff2a8a');
+    txt(c, ar ? m.dAr : m.dEn, px + 180, 420, 17, '#ffe14a');
+    const left = G.enemies.filter(e => e.state !== 'dead').length;
+    txt(c, (ar ? 'الأعداء الباقين: ' : 'ENEMIES LEFT: ') + left, px + 180, 470, 20, left ? '#ff6a9d' : '#3ffcff');
+    txt(c, L('score') + ': ' + G.score, px + 180, 505, 20, '#fff');
+    prompt(c, BIND.map(), L('close'), SW / 2, 670, 18);
+    if (Input.mapPressed() || Input.back() || Input.pausePressed()) { AudioSys.sfx('menuBack'); this.go('game'); }
+  },
+  controls(c, t) {
+    drawBackdrop(c, t); c.fillStyle = 'rgba(8,0,18,0.82)'; c.fillRect(0, 0, SW, SH);
+    if (this.ctrlView == null || this.screenT < 0.05) this.ctrlView = Input.dev();
+    const views = ['kb', 'xbox', 'ps'];
+    if (Input.navRight()) { this.ctrlView = views[(views.indexOf(this.ctrlView) + 1) % 3]; AudioSys.sfx('menuMove'); }
+    if (Input.navLeft()) { this.ctrlView = views[(views.indexOf(this.ctrlView) + 2) % 3]; AudioSys.sfx('menuMove'); }
+    const v = this.ctrlView, ar = Settings.lang === 'ar';
+    txt(c, L('controls') + ' — ' + (v === 'ps' ? L('ps') : v === 'xbox' ? L('xbox') : L('kb')), SW / 2, 48, 36, '#fff', 'center', '#ff2a8a');
+    txt(c, L('viewToggle'), SW / 2, 86, 16, '#aaa');
+    if (v === 'ps') this.psDiagram(c, t);
+    else {
+      const rows = v === 'kb'
+        ? [['c_move', 'W A S D'], ['c_aim', 'MOUSE'], ['c_attack', 'LMB'], ['c_throw', 'RMB / Q'], ['c_pick', 'E / RMB'], ['c_exec', 'SPACE'], ['c_restart', 'R'], ['c_dodge', 'CTRL / C'], ['c_look', 'SHIFT'], ['c_map', 'TAB / M'], ['c_pause', 'ESC / P']]
+        : [['c_move', 'LS'], ['c_aim', 'RS'], ['c_attack', 'RT'], ['c_throw', 'LT'], ['c_pick', 'xX'], ['c_exec', 'xA'], ['c_restart', 'xY'], ['c_dodge', 'xB'], ['c_look', 'RB / LB'], ['c_map', 'VIEW'], ['c_pause', 'START']];
+      const colA = ar ? 820 : 460, colB = ar ? 460 : 820;
+      rows.forEach((r, i) => {
+        const y = 130 + i * 46;
+        c.fillStyle = i % 2 ? 'rgba(255,255,255,0.04)' : 'rgba(255,42,138,0.07)'; c.fillRect(240, y - 21, 800, 42);
+        txt(c, L(r[0]), colA, y, 21, '#fff');
+        const parts = v === 'kb' ? [r[1]] : r[1].split(' / '); const total = parts.reduce((s, p) => s + glyphW(c, p) + 8, 0); let x = colB - total / 2;
+        for (const p of parts) x += drawGlyph(c, p, x, y) + 8;
+      });
+    }
+    txt(c, ar ? 'طيّح العدو بالباب أو القبضة أو الرمي، وبعدها نفّذ عليه. الثقيل ما يموت إلا بالرصاص.' : 'Knock enemies down with doors, fists or throws, then execute. Heavies only die to bullets.', SW / 2, 650, 16, '#ffe14a');
+    if (Input.back() || Input.confirm()) { AudioSys.sfx('menuBack'); this.go('menu', 2); }
+    this.backButton(c);
+  },
+  psDiagram(c, t) {
+    // original generic pixel controller (no logos), generated from code
+    const cv = sprite('psdiagram', () => {
+      const g = Pix.grid(82, 44), body = '#2c2c3a', hi = '#3c3c50', dk = '#1d1d28';
+      Pix.rect(g, 14, 2, 14, 3, '#4a4a60'); Pix.rect(g, 54, 2, 14, 3, '#4a4a60'); // L2 R2
+      Pix.rect(g, 13, 6, 16, 2, '#5a5a74'); Pix.rect(g, 53, 6, 16, 2, '#5a5a74'); // L1 R1
+      Pix.rect(g, 10, 8, 62, 16, body); Pix.ellipse(g, 19, 27, 10, 14, body); Pix.ellipse(g, 63, 27, 10, 14, body);
+      Pix.rect(g, 12, 9, 58, 2, hi);
+      Pix.rect(g, 29, 9, 24, 11, dk); Pix.rect(g, 30, 10, 22, 9, '#34344a'); // touchpad
+      Pix.rect(g, 25, 10, 2, 3, '#77779a'); Pix.rect(g, 55, 10, 2, 3, '#77779a'); // create / options
+      Pix.ellipse(g, 41, 23, 2, 2, '#55557a'); // home button (plain)
+      Pix.rect(g, 16, 13, 3, 9, '#151520'); Pix.rect(g, 13, 16, 9, 3, '#151520'); // d-pad
+      Pix.ellipse(g, 31, 28, 4.5, 4.5, '#151520'); Pix.ellipse(g, 31, 28, 3, 3, '#3a3a50'); Pix.ellipse(g, 51, 28, 4.5, 4.5, '#151520'); Pix.ellipse(g, 51, 28, 3, 3, '#3a3a50');
+      for (const [x, y] of [[64, 12], [68, 16], [64, 20], [60, 16]]) Pix.ellipse(g, x, y, 2.2, 2.2, '#151520');
+      Pix.outline(g, '#000000'); return Pix.canvas(g);
+    });
+    const S = 7, ox = SW / 2 - 41 * S, oy = 150;
+    c.save(); c.imageSmoothingEnabled = false; c.drawImage(cv, ox, oy, 82 * S, 44 * S); c.restore();
+    const at = (gx, gy) => [ox + gx * S, oy + gy * S];
+    // face symbols on the diagram
+    const face = [['pT', 64, 12], ['pO', 68, 16], ['pX', 64, 20], ['pS', 60, 16]];
+    for (const [g, x, y] of face) { const [sx, sy] = at(x, y); c.save(); c.imageSmoothingEnabled = false; c.drawImage(psButtonCanvas(g), sx - 15, sy - 15 + 3, 30, 30); c.restore(); }
+    const lab = [
+      ['L2', 21, 3, 'c_throw', 'L', 120], ['L1', 21, 7, 'c_look', 'L', 165], ['LS', 31, 28, 'c_move', 'L', 520], ['TOUCHPAD', 41, 13, 'c_map', 'T', 0],
+      ['R2', 61, 3, 'c_attack', 'R', 120], ['R1', 61, 7, 'c_look', 'R', 165], ['pT', 64, 12, 'c_restart', 'R', 225], ['pO', 68, 16, 'c_dodge', 'R', 285],
+      ['pX', 64, 20, 'c_exec', 'R', 345], ['pS', 60, 16, 'c_pick', 'R', 405], ['OPTIONS', 56, 11, 'c_pause', 'R', 465], ['RS', 51, 28, 'c_aim', 'R', 520],
+    ];
+    c.strokeStyle = 'rgba(63,252,255,0.6)'; c.lineWidth = 2;
+    for (const [g, gx, gy, key, side, ly] of lab) {
+      const [sx, sy] = at(gx, gy);
+      if (side === 'T') { c.beginPath(); c.moveTo(sx, sy); c.lineTo(sx, 120); c.stroke(); const w = glyphW(c, g); drawGlyph(c, g, sx - w - 6, 112); txt(c, L(key), sx + 6, 112, 18, '#fff', 'left'); continue; }
+      const lx = side === 'L' ? 300 : SW - 300;
+      c.beginPath(); c.moveTo(sx, sy); c.lineTo(lx, ly); c.stroke();
+      const w = glyphW(c, g);
+      if (side === 'L') { drawGlyph(c, g, lx - w - 4, ly); txt(c, L(key), lx - w - 14, ly, 18, '#fff', 'right'); }
+      else { drawGlyph(c, g, lx + 4, ly); txt(c, L(key), lx + w + 14, ly, 18, '#fff', 'left'); }
+    }
+    txt(c, (Settings.lang === 'ar' ? '✕ تأكيد  •  ○ رجوع في القوائم  •  ' : '✕ confirm  •  ○ back in menus  •  ') + (Input.padType === 'ps' && Input.pad ? L('padConnected') : ''), SW / 2, 610, 16, '#c9b6e8');
+  },
   pause(c, t) {
     this.drawGameFrozen(c);
     c.fillStyle = 'rgba(8,0,18,0.72)'; c.fillRect(0, 0, SW, SH);
@@ -412,6 +546,7 @@ const UI = {
       c.save(); c.translate(SW / 2, 490); c.scale(s, s); c.rotate(Math.sin(t * 2) * 0.05);
       txt(c, r.grade, 0, 0, 96, '#ffe14a', 'center', '#ff6a3d', FONT_TITLE); c.restore();
       if (r.newBest) txt(c, L('newBest'), SW / 2, 560, 22, '#3ffcff', 'center', '#3ffcff');
+      if (r.newMask) txt(c, L('newMask'), SW / 2, 592, 22, '#ff7ad1', 'center', '#ff2a8a');
       const isLast = r.level >= LEVELS.length - 1;
       const items = [];
       if (!isLast) items.push({ label: () => L('next'), act: () => this.startLevel(r.level + 1) });
