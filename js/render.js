@@ -78,6 +78,8 @@ G.draw = function (screenC, sw, sh) {
     if (e.windup > 0 || (e.kind === 'boss' && e.tele > 0)) { c.fillStyle = '#ff2a2a'; c.fillRect(Math.round(e.x) - 1, Math.round(e.y - e.r - 14), 2, 6); c.fillRect(Math.round(e.x) - 1, Math.round(e.y - e.r - 6), 2, 2); }
     if (e.kind === 'boss' && e.stun > 0) { c.fillStyle = '#ffe14a'; for (let i = 0; i < 4; i++) { const a = t * 5 + i * 1.6; c.fillRect(Math.round(e.x + Math.cos(a) * 18), Math.round(e.y + Math.sin(a) * 8 - 24), 2, 2); } }
   }
+  if (this.lock && this.lock.state !== 'dead') { const L2 = this.lock, r = (L2.r || 10) + 6 + Math.round(Math.sin(t * 8)), x = Math.round(L2.x), y = Math.round(L2.y); c.fillStyle = '#ff2a8a';
+    for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) { c.fillRect(x + sx * r - (sx > 0 ? 3 : 0), y + sy * r, 4, 1); c.fillRect(x + sx * r, y + sy * r - (sy > 0 ? 3 : 0), 1, 4); } }
   if (p.alive) {
     const s = humanGrid('player', p.weapon ? p.weapon.type : null, p, pm, 1.35);
     if (p.roll > 0) drawSpr(c, charCanvas(s.g), p.x, p.y, p.rollAng + (1 - p.roll / 0.34) * Math.PI * 2, false, 0.8);

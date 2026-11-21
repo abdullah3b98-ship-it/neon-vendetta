@@ -33,7 +33,7 @@ const G = {
     const H = this.H = rows.length, W = this.W = rows[0].length;
     this.tiles = new Uint8Array(W * H); this.style = new Array(W * H).fill('.');
     this.doors = []; this.enemies = []; this.pickups = []; this.bullets = []; this.thrown = []; this.particles = []; this.floaters = [];
-    this.combo = 0; this.comboTimer = 0; this.cleared = false; this.status = 'play'; this.shake = 0; this.flash = 0;
+    this.combo = 0; this.comboTimer = 0; this.cleared = false; this.lock = null; this.status = 'play'; this.shake = 0; this.flash = 0;
     this.floorStart = { score: this.score, kills: this.kills };
     this.outdoorStart = false;
     const nstyle = (x, y) => { for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, 1]]) { const r = rows[y + dy]; const c = r && r[x + dx]; if (c && FLOORS.includes(c)) return c; } return '.'; };
@@ -401,6 +401,8 @@ const G = {
         if (Input.pickupPressed()) this.pickUp();
         if (right) { if (p.weapon) this.throwWeapon(); else this.pickUp(); }
         if (Input.throwPressed()) { if (p.weapon) this.throwWeapon(); }
+        if (Input.grabPressed()) { if (p.weapon) this.throwWeapon(); else this.pickUp(); }
+        if (Input.lockPressed()) this.cycleLock();
         if (Input.executePressed()) { const d = this.nearestDowned(); if (d) this.startExec(d); }
         if (!p.exec && (Input.attackHeld() || Input.attackPressed())) this.playerAttack();
       }
@@ -432,7 +434,24 @@ const G = {
     for (const f of this.floaters) { f.life -= dt; f.y -= 24 * dt; }
     this.floaters = this.floaters.filter(f => f.life > 0);
   },
+  lockCandidates() {
+    const p = this.player, out = [];
+    for (const e of this.enemies) {
+      if (e.state === 'dead') continue; const d = Math.hypot(e.x - p.x, e.y - p.y); if (d > 460) continue;
+      if (!this.clearLine(p.x, p.y, e.x, e.y)) continue;
+      out.push({ e, df: Math.abs(angDiff(Math.atan2(e.y - p.y, e.x - p.x), p.ang)) });
+    }
+    return out.sort((a, b) => a.df - b.df).map(o => o.e);
+  },
+  cycleLock() {
+    const c = this.lockCandidates();
+    if (!c.length) { this.lock = null; return; }
+    if (!this.lock || !c.includes(this.lock)) this.lock = c[0];
+    else { const i = c.indexOf(this.lock); this.lock = i + 1 < c.length ? c[i + 1] : null; }
+    AudioSys.sfx(this.lock ? 'menuMove' : 'menuBack'); if (this.lock) Input.rumble(0, 0.25, 40);
+  },
   updateAim(dt) {
+    if (this.lock && (this.lock.state === 'dead' || Math.hypot(this.lock.x - this.player.x, this.lock.y - this.player.y) > 520 || (Input.mode === 'kb' && Input.mouse.moved && !Input.k('KeyF')))) this.lock = null;
     const p = this.player, look = Input.lookHeld();
     let offX = 0, offY = 0;
     if (Input.mode === 'pad') {
@@ -440,9 +459,10 @@ const G = {
       let target = null;
       if (mag > 0.3) target = Math.atan2(ay, ax);
       else { const mv = Input.moveVec(); if (Math.hypot(mv.x, mv.y) > 0.3) target = Math.atan2(mv.y, mv.x); }
+      if (this.lock) target = Math.atan2(this.lock.y - p.y, this.lock.x - p.x);
       if (target !== null && p.alive && !p.exec) {
         // light aim assist: snap toward nearest visible enemy near stick direction
-        if (Settings.aimAssist) {
+        if (Settings.aimAssist && !this.lock) {
           let best = null, bd = 0.32;
           for (const e of this.enemies) {
             if (e.state === 'dead' || e.state === 'down') continue;
@@ -461,7 +481,7 @@ const G = {
       const sw = 1280, sh = 720;
       const mx = (Input.mouse.x - sw / 2) / ZOOM + this.cam.x, my = (Input.mouse.y - sh / 2) / ZOOM + this.cam.y;
       this.aimWorld = { x: mx, y: my };
-      if (p.alive && !p.exec) p.ang = Math.atan2(my - p.y, mx - p.x);
+      if (p.alive && !p.exec) p.ang = this.lock ? Math.atan2(this.lock.y - p.y, this.lock.x - p.x) : Math.atan2(my - p.y, mx - p.x);
       const sx = (Input.mouse.x - sw / 2) / ZOOM, sy = (Input.mouse.y - sh / 2) / ZOOM;
       const k = look ? 0.9 : 0.3; offX = sx * k; offY = sy * k;
     }

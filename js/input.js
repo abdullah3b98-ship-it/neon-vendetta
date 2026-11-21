@@ -71,10 +71,16 @@ const Input = {
     const l = Math.hypot(x, y); if (l > 1) { x /= l; y /= l; }
     return { x, y };
   },
-  attackHeld() { return this.mouse.down[0] || this.b(7); },
-  attackPressed() { return this.mouse.pr[0] || this.bp(7); },
+  classic() { return Settings.padLayout !== 'alt'; },
+  // pad buttons per layout (standard mapping): 0 X/A, 1 O/B, 2 []/X, 3 /\/Y, 4 L1/LB, 5 R1/RB, 6 L2/LT, 7 R2/RT, 8 create/view, 9 options/start, 10 L3, 11 R3, 16 home, 17 touchpad
+  padAttack() { return this.classic() ? 5 : 7; },
+  attackHeld() { return this.mouse.down[0] || this.b(this.padAttack()); },
+  attackPressed() { return this.mouse.pr[0] || this.bp(this.padAttack()); },
   rightPressed() { return this.mouse.pr[2]; },
-  throwPressed() { return this.bp(6) || this.kpr('KeyQ'); },
+  grabPressed() { return this.classic() && this.bp(4); }, // classic L1: pick up when empty-handed, throw when holding
+  throwPressed() { return this.kpr('KeyQ') || (!this.classic() && this.bp(6)); },
+  pickupPressed() { return this.kpr('KeyE') || (!this.classic() && this.bp(2)); },
+  lockPressed() { return this.kpr('KeyF') || (this.classic() ? (this.bp(7) || this.bp(2)) : this.bp(11)); },
   dodgePressed() { return this.bp(1) || this.kpr('ControlLeft', 'KeyC'); },
   mapPressed() { return this.bp(17) || this.bp(8) || this.kpr('Tab', 'KeyM'); },
   dev() { return this.mode === 'pad' ? this.padType : 'kb'; },
@@ -86,9 +92,8 @@ const Input = {
       else if (this.pad.hapticActuators && this.pad.hapticActuators[0]) this.pad.hapticActuators[0].pulse(Math.max(strong, weak), ms);
     } catch (e) { }
   },
-  pickupPressed() { return this.kpr('KeyE') || this.bp(2); },
   executePressed() { return this.kpr('Space') || this.bp(0); },
   restartPressed() { return this.kpr('KeyR') || this.bp(3); },
   pausePressed() { return this.kpr('Escape', 'KeyP') || this.bp(9) || this.bp(16); },
-  lookHeld() { return this.k('ShiftLeft') || this.k('ShiftRight') || this.b(5) || this.b(4); },
+  lookHeld() { return this.k('ShiftLeft') || this.k('ShiftRight') || (this.classic() ? this.b(6) : (this.b(5) || this.b(4))); },
 };

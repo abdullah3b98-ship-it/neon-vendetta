@@ -1,6 +1,6 @@
 // ===== UI: menus, HUD, post effects, main loop =====
 const SAVE_KEY = 'neonVendetta.save.v1';
-const Settings = { music: 0.7, sfx: 0.8, lang: 'ar', fx: true, shake: 1, aimAssist: true };
+const Settings = { music: 0.7, sfx: 0.8, lang: 'ar', fx: true, shake: 1, aimAssist: true, padLayout: 'classic' };
 const Save = { unlocked: 1, best: {}, mask: 0 };
 (function load() { try { const d = JSON.parse(localStorage.getItem(SAVE_KEY) || '{}'); if (d.settings) Object.assign(Settings, d.settings); if (d.unlocked) Save.unlocked = d.unlocked; if (d.best) Save.best = d.best; if (d.mask != null) Save.mask = d.mask; } catch (e) { } })();
 function persist() { try { localStorage.setItem(SAVE_KEY, JSON.stringify({ settings: Settings, unlocked: Save.unlocked, best: Save.best, mask: Save.mask })); } catch (e) { } }
@@ -63,13 +63,17 @@ function prompt(c, glyphs, label, cx, cy, size) {
   else { for (const g of glyphs) x += drawGlyph(c, g, x, cy) + 4; txt(c, label, x + gap, cy, size, '#fff', 'left'); }
 }
 const BINDS = {
-  pickup: { kb: ['E'], xbox: ['xX'], ps: ['pS'] }, execute: { kb: ['SPACE'], xbox: ['xA'], ps: ['pX'] },
-  restart: { kb: ['R'], xbox: ['xY'], ps: ['pT'] }, throwW: { kb: ['RMB'], xbox: ['LT'], ps: ['L2'] },
   confirm: { kb: ['ENTER'], xbox: ['xA'], ps: ['pX'] }, back: { kb: ['ESC'], xbox: ['xB'], ps: ['pO'] },
-  dodge: { kb: ['CTRL'], xbox: ['xB'], ps: ['pO'] }, map: { kb: ['TAB'], xbox: ['VIEW'], ps: ['TOUCHPAD'] },
-  pause: { kb: ['ESC'], xbox: ['START'], ps: ['OPTIONS'] }, attack: { kb: ['LMB'], xbox: ['RT'], ps: ['R2'] },
+  execute: { kb: ['SPACE'], xbox: ['xA'], ps: ['pX'] }, dodge: { kb: ['CTRL'], xbox: ['xB'], ps: ['pO'] },
+  map: { kb: ['TAB'], xbox: ['VIEW'], ps: ['TOUCHPAD'] }, pause: { kb: ['ESC'], xbox: ['START'], ps: ['OPTIONS'] },
+  // layout dependent
+  pickup: { kb: ['E'], xbox: ['xX'], ps: ['pS'], c_xbox: ['LB'], c_ps: ['L1'] },
+  throwW: { kb: ['RMB'], xbox: ['LT'], ps: ['L2'], c_xbox: ['LB'], c_ps: ['L1'] },
+  attack: { kb: ['LMB'], xbox: ['RT'], ps: ['R2'], c_xbox: ['RB'], c_ps: ['R1'] },
+  restart: { kb: ['R'], xbox: ['xY'], ps: ['pT'], c_xbox: ['xA'], c_ps: ['pX'] },
+  lock: { kb: ['F'], xbox: ['RS'], ps: ['R3'], c_xbox: ['RT'], c_ps: ['R2'] },
 };
-const BIND = new Proxy({}, { get: (_, k) => () => BINDS[k][Input.dev()] });
+const BIND = new Proxy({}, { get: (_, k) => () => { const d = Input.dev(), b = BINDS[k]; return (d !== 'kb' && Input.classic() && b['c_' + d]) || b[d]; } });
 
 // ---- post FX
 const FX = {
@@ -294,9 +298,10 @@ const UI = {
       { label: () => L('fx') + ':  ' + onoff(Settings.fx), adjust: tog('fx'), act: tog('fx') },
       { label: () => L('shake') + ':  ' + onoff(Settings.shake), adjust: tog('shake'), act: tog('shake') },
       { label: () => L('aimAssist') + ':  ' + onoff(Settings.aimAssist), adjust: tog('aimAssist'), act: tog('aimAssist') },
+      { label: () => L('padLayout') + ':  ' + (Settings.padLayout === 'alt' ? L('layoutAlt') : L('layoutClassic')), adjust: () => { Settings.padLayout = Settings.padLayout === 'alt' ? 'classic' : 'alt'; persist(); }, act: () => { Settings.padLayout = Settings.padLayout === 'alt' ? 'classic' : 'alt'; persist(); } },
       { label: () => L('back'), act: () => this.handleBack() },
     ];
-    menuList(c, items, 0, SW / 2, 190, 64, 28, t);
+    menuList(c, items, 0, SW / 2, 170, 58, 27, t);
     txt(c, Settings.lang === 'ar' ? '← → للتعديل' : '← → to adjust', SW / 2, 650, 16, '#aaa');
     if (Input.back()) { AudioSys.sfx('menuBack'); this.handleBack(); }
   },
@@ -324,7 +329,7 @@ const UI = {
   game(c, t, dt) {
     if (Input.pausePressed()) { AudioSys.sfx('menuBack'); this.go('pause'); this.drawGameFrozen(c); return; }
     if (Input.mapPressed() && G.status === 'play') { AudioSys.sfx('menuOk'); this.go('map'); this.drawGameFrozen(c); return; }
-    if (Input.restartPressed() && G.status !== 'complete') { G.restartFloor(); AudioSys.muffle(false); this.lastMuff = false; }
+    if ((Input.restartPressed() || (G.status === 'dead' && Input.bp(0))) && G.status !== 'complete') { G.restartFloor(); AudioSys.muffle(false); this.lastMuff = false; }
     if (G.status !== 'complete' || true) G.update(dt);
     G.draw(c, SW, SH);
     this.hud(c, t, dt);
@@ -368,6 +373,7 @@ const UI = {
     if (G.status === 'play' && p.alive && !p.exec) {
       const dn = G.nearestDowned(), pk = G.nearestPickup();
       if (dn) prompt(c, BIND.execute(), L('execute'), SW / 2, SH - 60);
+      else if (G.lock) prompt(c, BIND.lock(), L('c_lock'), SW / 2, SH - 60, 16);
       else if (pk) prompt(c, BIND.pickup(), (p.weapon ? L('swap') : L('pickup')) + ' — ' + L(pk.type), SW / 2, SH - 60);
     }
     if (G.cleared && G.status === 'play') {
@@ -455,16 +461,18 @@ const UI = {
     if (Input.navRight()) { this.ctrlView = views[(views.indexOf(this.ctrlView) + 1) % 3]; AudioSys.sfx('menuMove'); }
     if (Input.navLeft()) { this.ctrlView = views[(views.indexOf(this.ctrlView) + 2) % 3]; AudioSys.sfx('menuMove'); }
     const v = this.ctrlView, ar = Settings.lang === 'ar';
-    txt(c, L('controls') + ' — ' + (v === 'ps' ? L('ps') : v === 'xbox' ? L('xbox') : L('kb')), SW / 2, 48, 36, '#fff', 'center', '#ff2a8a');
+    txt(c, L('controls') + ' — ' + (v === 'ps' ? L('ps') : v === 'xbox' ? L('xbox') : L('kb')) + (v !== 'kb' ? '  (' + (Input.classic() ? L('layoutClassic') : L('layoutAlt')) + ')' : ''), SW / 2, 48, 32, '#fff', 'center', '#ff2a8a');
     txt(c, L('viewToggle'), SW / 2, 86, 16, '#aaa');
     if (v === 'ps') this.psDiagram(c, t);
     else {
       const rows = v === 'kb'
         ? [['c_move', 'W A S D'], ['c_aim', 'MOUSE'], ['c_attack', 'LMB'], ['c_throw', 'RMB / Q'], ['c_pick', 'E / RMB'], ['c_exec', 'SPACE'], ['c_restart', 'R'], ['c_dodge', 'CTRL / C'], ['c_look', 'SHIFT'], ['c_map', 'TAB / M'], ['c_pause', 'ESC / P']]
-        : [['c_move', 'LS'], ['c_aim', 'RS'], ['c_attack', 'RT'], ['c_throw', 'LT'], ['c_pick', 'xX'], ['c_exec', 'xA'], ['c_restart', 'xY'], ['c_dodge', 'xB'], ['c_look', 'RB / LB'], ['c_map', 'VIEW'], ['c_pause', 'START']];
+        : Input.classic()
+          ? [['c_move', 'LS'], ['c_aim', 'RS'], ['c_attack', 'RB'], ['c_grab', 'LB'], ['c_lock', 'RT / xX'], ['c_look', 'LT'], ['c_exec', 'xA'], ['c_restart', 'xY'], ['c_dodge', 'xB'], ['c_map', 'VIEW'], ['c_pause', 'START']]
+          : [['c_move', 'LS'], ['c_aim', 'RS'], ['c_attack', 'RT'], ['c_throw', 'LT'], ['c_pick', 'xX'], ['c_exec', 'xA'], ['c_restart', 'xY'], ['c_dodge', 'xB'], ['c_look', 'RB / LB'], ['c_lock', 'RS'], ['c_map', 'VIEW'], ['c_pause', 'START']];
       const colA = ar ? 820 : 460, colB = ar ? 460 : 820;
       rows.forEach((r, i) => {
-        const y = 130 + i * 46;
+        const y = 126 + i * 43;
         c.fillStyle = i % 2 ? 'rgba(255,255,255,0.04)' : 'rgba(255,42,138,0.07)'; c.fillRect(240, y - 21, 800, 42);
         txt(c, L(r[0]), colA, y, 21, '#fff');
         const parts = v === 'kb' ? [r[1]] : r[1].split(' / '); const total = parts.reduce((s, p) => s + glyphW(c, p) + 8, 0); let x = colB - total / 2;
@@ -497,10 +505,14 @@ const UI = {
     // face symbols on the diagram
     const face = [['pT', 64, 12], ['pO', 68, 16], ['pX', 64, 20], ['pS', 60, 16]];
     for (const [g, x, y] of face) { const [sx, sy] = at(x, y); c.save(); c.imageSmoothingEnabled = false; c.drawImage(psButtonCanvas(g), sx - 15, sy - 15 + 3, 30, 30); c.restore(); }
-    const lab = [
-      ['L2', 21, 3, 'c_throw', 'L', 120], ['L1', 21, 7, 'c_look', 'L', 165], ['LS', 31, 28, 'c_move', 'L', 520], ['TOUCHPAD', 41, 13, 'c_map', 'T', 0],
-      ['R2', 61, 3, 'c_attack', 'R', 120], ['R1', 61, 7, 'c_look', 'R', 165], ['pT', 64, 12, 'c_restart', 'R', 225], ['pO', 68, 16, 'c_dodge', 'R', 285],
-      ['pX', 64, 20, 'c_exec', 'R', 345], ['pS', 60, 16, 'c_pick', 'R', 405], ['OPTIONS', 56, 11, 'c_pause', 'R', 465], ['RS', 51, 28, 'c_aim', 'R', 520],
+    const lab = Input.classic() ? [
+      ['L2', 21, 3, 'c_look', 'L', 120], ['L1', 21, 7, 'c_grab', 'L', 170], ['LS', 31, 28, 'c_move', 'L', 520], ['TOUCHPAD', 41, 13, 'c_map', 'T', 0],
+      ['R2', 61, 3, 'c_lock', 'R', 120], ['R1', 61, 7, 'c_attack', 'R', 170], ['pT', 64, 12, 'c_restart', 'R', 225], ['pO', 68, 16, 'c_dodge', 'R', 285],
+      ['pX', 64, 20, 'c_execR', 'R', 345], ['pS', 60, 16, 'c_lock', 'R', 405], ['OPTIONS', 56, 11, 'c_pause', 'R', 465], ['RS', 51, 28, 'c_aim', 'R', 520],
+    ] : [
+      ['L2', 21, 3, 'c_throw', 'L', 120], ['L1', 21, 7, 'c_look', 'L', 170], ['LS', 31, 28, 'c_move', 'L', 520], ['TOUCHPAD', 41, 13, 'c_map', 'T', 0],
+      ['R2', 61, 3, 'c_attack', 'R', 120], ['R1', 61, 7, 'c_look', 'R', 170], ['pT', 64, 12, 'c_restart', 'R', 225], ['pO', 68, 16, 'c_dodge', 'R', 285],
+      ['pX', 64, 20, 'c_exec', 'R', 345], ['pS', 60, 16, 'c_pick', 'R', 405], ['OPTIONS', 56, 11, 'c_pause', 'R', 465], ['RS', 51, 28, 'c_aimLock', 'R', 520],
     ];
     c.strokeStyle = 'rgba(63,252,255,0.6)'; c.lineWidth = 2;
     for (const [g, gx, gy, key, side, ly] of lab) {
